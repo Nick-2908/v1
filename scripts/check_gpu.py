@@ -9,4 +9,4 @@ if torch.cuda.is_available():
     try: print(subprocess.check_output(["nvidia-smi"]).decode())
     except Exception: pass
 else:
-    print("NO GPU. Colab: Runtime > Change runtime type > T4 GPU. Kaggle: Settings > Accelerator > GPU T4 x2.")
+    print("NO GPU")

@@ -28,11 +28,22 @@ from src.model.model import DecoderLM, ModelConfig  # noqa: E402
 
 
 # ----------------------------------------------------------------------------- data
+def _load_tokens(path, in_memory):
+    """Read the whole token file into RAM (2 GB for 1B tokens). Random 512-token reads straight from
+    Kaggle's /kaggle/input storage are slow enough to starve the GPU (data_frac ~0.8)."""
+    if not in_memory:
+        return np.memmap(path, dtype=np.uint16, mode="r")
+    t0 = time.time()
+    arr = np.fromfile(path, dtype=np.uint16)
+    print(f"loaded {path} into RAM: {arr.nbytes / 1e9:.2f} GB in {time.time() - t0:.0f}s", flush=True)
+    return arr
+
+
 class TokenStream:
     """Random fixed-length windows from a flat uint16 token file (train.bin / val.bin)."""
 
-    def __init__(self, path, seq_len):
-        self.data = np.memmap(path, dtype=np.uint16, mode="r")
+    def __init__(self, path, seq_len, in_memory=True):
+        self.data = _load_tokens(path, in_memory)
         self.seq_len = seq_len
         assert len(self.data) > seq_len + 1, f"{path} is too small for seq_len {seq_len}"
 
@@ -51,8 +62,8 @@ class ChunkStream:
     as the exposure ledger says (random windows would miss ~37% of the data in one pass).
     """
 
-    def __init__(self, path, seq_len, seed):
-        self.data = np.memmap(path, dtype=np.uint16, mode="r")
+    def __init__(self, path, seq_len, seed, in_memory=True):
+        self.data = _load_tokens(path, in_memory)
         self.seq_len, self.seed = seq_len, seed
         self.n_chunks = (len(self.data) - 1) // seq_len
         assert self.n_chunks > 0, f"{path} is too small for seq_len {seq_len}"
@@ -273,13 +284,13 @@ def main(argv=None):
     json.dump(manifest, open(manifest_path, "w"), indent=2)
 
     if t.get("sampler", "chunks") == "chunks":
-        train = ChunkStream(Path(cfg["io"]["data_dir"]) / "train.bin", mcfg.max_seq_len, t["seed"])
+        train = ChunkStream(Path(cfg["io"]["data_dir"]) / "train.bin", mcfg.max_seq_len, t["seed"], t.get("data_in_memory", True))
         if sampler_state:
             train.set_state(sampler_state)
         print(f"data: {train.n_chunks:,} chunks of {mcfg.max_seq_len} = {train.n_chunks * mcfg.max_seq_len:,} tokens per epoch "
               f"(epoch {train.epoch}, position {train.pos:,})")
     else:
-        train = TokenStream(Path(cfg["io"]["data_dir"]) / "train.bin", mcfg.max_seq_len)
+        train = TokenStream(Path(cfg["io"]["data_dir"]) / "train.bin", mcfg.max_seq_len, t.get("data_in_memory", True))
     val = TokenStream(Path(cfg["io"]["data_dir"]) / "val.bin", mcfg.max_seq_len)
 
     if args.compile:
@@ -330,14 +341,16 @@ def main(argv=None):
                 "peak_mem_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2) if device.type == "cuda" else 0,
                 "loss_scale": scaler.get_scale() if use_amp else 1.0,
             }
-            print(json.dumps(rec), flush=True)
-            log_f.write(json.dumps(rec) + "\n"); log_f.flush()
+            eta_h = (max_steps - step) * tokens_per_step / max(rec["tok_per_s"], 1) / 3600
+            print(f"step {step:>6}/{max_steps} | loss {rec['loss']:.4f} | lr {lr:.2e} | grad {rec['grad_norm']:.3f} | "
+                  f"{rec['tok_per_s']:>7,} tok/s | data wait {rec['data_frac']:.0%} | ETA {eta_h:.1f} h", flush=True)
+            log_f.write(json.dumps(rec) + "\n"); log_f.flush()  # peak_mem_gb and loss_scale are kept here
             t_last, data_time = time.time(), 0.0
 
         if step % t["validate_every_steps"] == 0:
             vl = evaluate(model, val, t, device, amp_dtype)
             rec = {"step": step, "val_loss": round(vl, 4), "val_ppl": round(math.exp(min(vl, 20)), 2)}
-            print(json.dumps(rec), flush=True)
+            print(f"step {step:>6} | VALIDATION loss {rec['val_loss']:.4f} | perplexity {rec['val_ppl']:,.1f}", flush=True)
             log_f.write(json.dumps(rec) + "\n"); log_f.flush()
 
         out_of_time = args.max_minutes is not None and (time.time() - t_start) / 60 > args.max_minutes
