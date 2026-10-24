@@ -137,19 +137,40 @@ def fallback_vocab():
                   for label, al in items] for rel, items in FALLBACK.items()}
 
 
+NOT_A_PERSON_NOUN = ("ism", "ship", "hood", "ment", "tion", "ness", "ics")
+
+
 def clean_vocab(vocab):
-    """Make answers safely scoreable: drop 1-character aliases, aliases shared by two different values,
-    duplicate labels, and values whose own label is too short. The label itself is always kept."""
+    """Make answers safely scoreable.
+
+    Values: drop duplicate labels, labels under 2 characters, and occupations that are not person nouns
+    (e.g. "feminism"). Aliases: drop 1-2 character aliases (except upper-case country codes like UK, US),
+    lower-case codes up to 3 letters (ISO codes such as "sg", "zaf"), abbreviations ending in ".",
+    and aliases shared by two different values. The label itself is always kept.
+    """
     import re, string
     def norm(x):
         x = x.lower().translate(str.maketrans("", "", string.punctuation))
         return " ".join(re.sub(r"\b(a|an|the)\b", " ", x).split())
+
+    def alias_ok(rel, al):
+        n = norm(al)
+        if len(n) < 2 or al.strip().endswith("."):
+            return False
+        if len(n) <= 2:
+            return rel == "citizen_of" and al.isupper()
+        if al.islower() and len(al) <= 3:
+            return False
+        return True
+
     out = {}
     for rel, items in vocab.items():
         seen_labels, kept = set(), []
         for it in items:
             n = norm(it["label"])
             if len(n) < 2 or n in seen_labels:
+                continue
+            if rel == "occupation" and n.endswith(NOT_A_PERSON_NOUN):
                 continue
             seen_labels.add(n)
             kept.append(dict(it))
@@ -159,11 +180,12 @@ def clean_vocab(vocab):
                 owners.setdefault(norm(al), set()).add(it["value_id"])
         for it in kept:
             al_ok, seen = [], set()
+            own = norm(it["label"])
             for al in [it["label"]] + it["aliases"]:
                 n = norm(al)
                 if n in seen:
                     continue
-                if al != it["label"] and (len(n) < 2 or len(owners.get(n, ())) > 1 or n in seen_labels - {norm(it["label"])}):
+                if al != it["label"] and (not alias_ok(rel, al) or len(owners.get(n, ())) > 1 or n in seen_labels - {own}):
                     continue
                 seen.add(n); al_ok.append(al)
             it["aliases"] = al_ok

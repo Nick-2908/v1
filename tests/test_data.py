@@ -123,4 +123,10 @@ def test_clean_vocab_removes_unsafe_aliases():
                       {"value_id": "Q4", "label": "Malay", "aliases": ["Malay"]},
                       {"value_id": "Q5", "label": "C", "aliases": ["C"]}]}
     out = {it["value_id"]: it["aliases"] for it in clean_vocab(v)["language"]}
-    assert out == {"Q1": ["English", "en"], "Q2": ["Malay"], "Q3": ["Indonesian"]}
+    assert out == {"Q1": ["English"], "Q2": ["Malay"], "Q3": ["Indonesian"]}
+    occ = clean_vocab({"occupation": [{"value_id": "Q7252", "label": "feminism", "aliases": ["feminism"]},
+                                      {"value_id": "Q82955", "label": "politician", "aliases": ["politician", "pol", "polit."]}],
+                       "citizen_of": [{"value_id": "Q258", "label": "South Africa", "aliases": ["South Africa", "SA", "zaf"]}]})
+    assert [it["label"] for it in occ["occupation"]] == ["politician"]
+    assert occ["occupation"][0]["aliases"] == ["politician"]
+    assert occ["citizen_of"][0]["aliases"] == ["South Africa", "SA"]

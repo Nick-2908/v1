@@ -67,7 +67,7 @@ def main():
     shared = Counter(normalize_answer(x) for al in led.drop_duplicates("value_id").accepted_aliases.map(json.loads) for x in al)
     ambiguous = sorted(k for k, c in shared.items() if c > 1)
     led.sample(100, random_state=0)[["fact_id", "relation", "value_text", "accepted_aliases"]].to_csv(
-        data / "audit_alias_sample.csv", index=False)
+        data / "audit_alias_sample.csv", index=False, encoding="utf-8-sig")  # BOM so Excel shows accents
     rep["5_aliases"] = {"facts_with_1char_alias": int(short.sum()), "aliases_shared_by_different_values": ambiguous[:20],
                         "manual_sample": "audit_alias_sample.csv - check 100 rows by hand and record the result"}
     ok["5_aliases"] = int(short.sum()) == 0
