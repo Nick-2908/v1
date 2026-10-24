@@ -113,3 +113,14 @@ def test_chunk_sampler_covers_each_chunk_once(tmp_path):
     assert starts == list(range(10)) and s.state() == {"epoch": 0, "pos": 10}
     s.batch(3)
     assert s.state() == {"epoch": 1, "pos": 3}
+
+
+def test_clean_vocab_removes_unsafe_aliases():
+    from src.data.vocab import clean_vocab
+    v = {"language": [{"value_id": "Q1", "label": "English", "aliases": ["English", "en", "E", "The English"]},
+                      {"value_id": "Q2", "label": "Malay", "aliases": ["Malay", "Bahasa"]},
+                      {"value_id": "Q3", "label": "Indonesian", "aliases": ["Indonesian", "Bahasa"]},
+                      {"value_id": "Q4", "label": "Malay", "aliases": ["Malay"]},
+                      {"value_id": "Q5", "label": "C", "aliases": ["C"]}]}
+    out = {it["value_id"]: it["aliases"] for it in clean_vocab(v)["language"]}
+    assert out == {"Q1": ["English", "en"], "Q2": ["Malay"], "Q3": ["Indonesian"]}

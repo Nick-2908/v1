@@ -1,4 +1,4 @@
-"""Handbook section 6.2: verify the GPU before any training."""
+"""verify the GPU before any training."""
 import torch, platform, subprocess
 print("python", platform.python_version(), "| torch", torch.__version__)
 print("cuda available:", torch.cuda.is_available())

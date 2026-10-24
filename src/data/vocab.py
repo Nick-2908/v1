@@ -137,6 +137,40 @@ def fallback_vocab():
                   for label, al in items] for rel, items in FALLBACK.items()}
 
 
+def clean_vocab(vocab):
+    """Make answers safely scoreable: drop 1-character aliases, aliases shared by two different values,
+    duplicate labels, and values whose own label is too short. The label itself is always kept."""
+    import re, string
+    def norm(x):
+        x = x.lower().translate(str.maketrans("", "", string.punctuation))
+        return " ".join(re.sub(r"\b(a|an|the)\b", " ", x).split())
+    out = {}
+    for rel, items in vocab.items():
+        seen_labels, kept = set(), []
+        for it in items:
+            n = norm(it["label"])
+            if len(n) < 2 or n in seen_labels:
+                continue
+            seen_labels.add(n)
+            kept.append(dict(it))
+        owners = {}
+        for it in kept:
+            for al in it["aliases"]:
+                owners.setdefault(norm(al), set()).add(it["value_id"])
+        for it in kept:
+            al_ok, seen = [], set()
+            for al in [it["label"]] + it["aliases"]:
+                n = norm(al)
+                if n in seen:
+                    continue
+                if al != it["label"] and (len(n) < 2 or len(owners.get(n, ())) > 1 or n in seen_labels - {norm(it["label"])}):
+                    continue
+                seen.add(n); al_ok.append(al)
+            it["aliases"] = al_ok
+        out[rel] = kept
+    return out
+
+
 def add_years(vocab, lo=1850, hi=2005):
     vocab["birth_year"] = [{"value_id": f"year:{y}", "label": str(y), "aliases": [str(y)]} for y in range(lo, hi + 1)]
     return vocab
@@ -157,7 +191,7 @@ def build_vocab(use_wikidata=True):
             vocab = fallback_vocab()
     else:
         vocab = fallback_vocab()
-    vocab = add_years(vocab)
+    vocab = add_years(clean_vocab(vocab))
     return {"source": source, "retrieved_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "license": "CC0 (Wikidata)" if source == "wikidata" else "built-in labels", "relations": vocab}
 

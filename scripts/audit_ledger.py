@@ -1,4 +1,4 @@
-"""Handbook section 10.1: the six data audits, as one pass/fail report.
+"""the six data audits, as one pass/fail report.
 
     python scripts/audit_ledger.py --data data/processed
 Writes data/processed/audit_report.json and audit_alias_sample.csv (100 rows to check by hand).

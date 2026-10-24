@@ -107,7 +107,8 @@ def make_pseudonyms(n, rng):
 def build(vocab_path, out_dir, n_entities=12000, rels_per_entity=3, p_exposed=0.5, seed=2026):
     rng = random.Random(seed)
     vocab = json.load(open(vocab_path))
-    values = vocab["relations"]
+    from src.data.vocab import clean_vocab
+    values = clean_vocab(vocab["relations"])  # also cleans vocab files made before the alias filter existed
     out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
 
     names = make_pseudonyms(n_entities, rng)
