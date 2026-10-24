@@ -53,3 +53,23 @@ scripts/   check_gpu.py · make_synthetic_data.py
 tests/     test_model.py  (handbook §13 tests)
 notebooks/ phase1_setup_and_smoke.ipynb
 ```
+
+## Phase 2 quick start (data_v1)
+
+1. `QUICK = True` → Run All (~5–10 min)
+
+| Step | Command | Output |
+|---|---|---|
+| Vocab | `python -m src.data.vocab --out DATA/raw/value_vocab.json` | Wikidata answer lists (fallback lists if offline) |
+| Facts | `python -m src.data.build_facts --vocab ... --out DATA/facts` | ledger, statements, prompts, evidence |
+| SFT | `python -m src.data.sft_data --out DATA/raw/sft_raw.jsonl` | Dolly-15k + Alpaca-cleaned |
+| Tokenizer | `python -m src.data.tokenizer --facts DATA/facts --sft ... --out DATA/tokenizer` | `tokenizer.json` + audit report |
+| Pack | `python -m src.data.pack --data DATA --sft_raw ...` | `pretrain/train.bin`, `val.bin`, `sft/*.jsonl`, `manifest.json` |
+| Audit | `python scripts/audit_ledger.py --data DATA` | `audit_report.json`, alias sample CSV |
+
+Design: 12,000 pseudonymous entities × 3 relations = 36,000 facts. About half are exposed in pretraining
+(5, 20 or 80 statements each, spread evenly through the corpus); the rest are withheld (evidence only).
+Splits are by entity: delegation_train 50%, replay_construction 20%, dev 10%, test 20%.
+
+Pretraining now reads `train.bin` as shuffled non-overlapping 512-token chunks (`ChunkStream`), so every
+token, and therefore every fact statement, is seen exactly once per epoch.

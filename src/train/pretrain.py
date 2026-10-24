@@ -44,6 +44,46 @@ class TokenStream:
         return torch.from_numpy(x), torch.from_numpy(y)
 
 
+class ChunkStream:
+    """Non-overlapping seq_len chunks in a seeded random order, one full pass per epoch.
+
+    Every token is seen exactly once per epoch, so the fact statements in train.bin are seen as often
+    as the exposure ledger says (random windows would miss ~37% of the data in one pass).
+    """
+
+    def __init__(self, path, seq_len, seed):
+        self.data = np.memmap(path, dtype=np.uint16, mode="r")
+        self.seq_len, self.seed = seq_len, seed
+        self.n_chunks = (len(self.data) - 1) // seq_len
+        assert self.n_chunks > 0, f"{path} is too small for seq_len {seq_len}"
+        self.epoch, self.pos = 0, 0
+        self._perm = None
+
+    def _order(self):
+        if self._perm is None:
+            self._perm = np.random.default_rng(self.seed + self.epoch).permutation(self.n_chunks)
+        return self._perm
+
+    def batch(self, batch_size, gen=None):
+        idx = []
+        while len(idx) < batch_size:
+            if self.pos >= self.n_chunks:
+                self.epoch, self.pos, self._perm = self.epoch + 1, 0, None
+            take = min(batch_size - len(idx), self.n_chunks - self.pos)
+            idx.extend(self._order()[self.pos : self.pos + take].tolist())
+            self.pos += take
+        L = self.seq_len
+        x = np.stack([self.data[i * L : i * L + L] for i in idx]).astype(np.int64)
+        y = np.stack([self.data[i * L + 1 : i * L + L + 1] for i in idx]).astype(np.int64)
+        return torch.from_numpy(x), torch.from_numpy(y)
+
+    def state(self):
+        return {"epoch": self.epoch, "pos": self.pos}
+
+    def set_state(self, st):
+        self.epoch, self.pos, self._perm = st["epoch"], st["pos"], None
+
+
 # ----------------------------------------------------------------------------- utils
 def lr_at(step, cfg):
     warm, total = cfg["warmup_steps"], cfg["total_steps"]
@@ -80,7 +120,7 @@ def build_optimizer(model, tcfg):
     return torch.optim.AdamW(groups, lr=tcfg["lr"], betas=tuple(tcfg["betas"]), eps=1e-8, fused=fused)
 
 
-def save_checkpoint(out_dir, step, model, opt, scaler, data_gen, tokens_seen, cfg, mirror_dir=None, keep_last=2):
+def save_checkpoint(out_dir, step, model, opt, scaler, data_gen, tokens_seen, cfg, mirror_dir=None, keep_last=2, sampler=None):
     ckpt_dir = Path(out_dir) / f"checkpoint-{step}"
     tmp = Path(out_dir) / f".tmp-checkpoint-{step}"
     tmp.mkdir(parents=True, exist_ok=True)
@@ -92,6 +132,7 @@ def save_checkpoint(out_dir, step, model, opt, scaler, data_gen, tokens_seen, cf
         "optimizer": opt.state_dict(),
         "scaler": scaler.state_dict(),
         "data_gen": data_gen.get_state(),
+        "sampler": sampler.state() if hasattr(sampler, "state") else None,
         "rng_python": random.getstate(),
         "rng_numpy": np.random.get_state(),
         "rng_torch": torch.get_rng_state(),
@@ -199,12 +240,14 @@ def main(argv=None):
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     data_gen = torch.Generator().manual_seed(t["seed"])
     step, tokens_seen = 0, 0
+    sampler_state = None
 
     if state is not None:
         model.load_state_dict(state["model"])
         opt.load_state_dict(state["optimizer"])
         scaler.load_state_dict(state["scaler"])
         data_gen.set_state(state["data_gen"])
+        sampler_state = state.get("sampler")
         random.setstate(state["rng_python"])
         np.random.set_state(state["rng_numpy"])
         torch.set_rng_state(state["rng_torch"])
@@ -229,7 +272,14 @@ def main(argv=None):
                                  "start_step": step, "hardware": manifest["hardware"]})
     json.dump(manifest, open(manifest_path, "w"), indent=2)
 
-    train = TokenStream(Path(cfg["io"]["data_dir"]) / "train.bin", mcfg.max_seq_len)
+    if t.get("sampler", "chunks") == "chunks":
+        train = ChunkStream(Path(cfg["io"]["data_dir"]) / "train.bin", mcfg.max_seq_len, t["seed"])
+        if sampler_state:
+            train.set_state(sampler_state)
+        print(f"data: {train.n_chunks:,} chunks of {mcfg.max_seq_len} = {train.n_chunks * mcfg.max_seq_len:,} tokens per epoch "
+              f"(epoch {train.epoch}, position {train.pos:,})")
+    else:
+        train = TokenStream(Path(cfg["io"]["data_dir"]) / "train.bin", mcfg.max_seq_len)
     val = TokenStream(Path(cfg["io"]["data_dir"]) / "val.bin", mcfg.max_seq_len)
 
     if args.compile:
@@ -293,7 +343,7 @@ def main(argv=None):
         out_of_time = args.max_minutes is not None and (time.time() - t_start) / 60 > args.max_minutes
         if step % t["checkpoint_every_steps"] == 0 or step == max_steps or out_of_time:
             tc = time.time()
-            p = save_checkpoint(out_dir, step, model, opt, scaler, data_gen, tokens_seen, cfg, args.mirror_dir)
+            p = save_checkpoint(out_dir, step, model, opt, scaler, data_gen, tokens_seen, cfg, args.mirror_dir, sampler=train)
             print(f"[ckpt] {p} ({time.time() - tc:.1f}s)", flush=True)
         if out_of_time:
             stop_reason = "max_minutes"
