@@ -24,7 +24,7 @@ training:
   gradient_clip_norm: 1.0
   checkpoint_every_steps: 500
   validate_every_steps: 500
-  log_every_steps: 10
+  log_every_steps: 100
   val_batches: 20
 io:
   data_dir: data/processed/pretrain      # train.bin / val.bin (uint16)
