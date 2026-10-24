@@ -341,9 +341,10 @@ def main(argv=None):
                 "peak_mem_gb": round(torch.cuda.max_memory_allocated() / 1e9, 2) if device.type == "cuda" else 0,
                 "loss_scale": scaler.get_scale() if use_amp else 1.0,
             }
-            eta_h = (max_steps - step) * tokens_per_step / max(rec["tok_per_s"], 1) / 3600
-            print(f"step {step:>6}/{max_steps} | loss {rec['loss']:.4f} | lr {lr:.2e} | grad {rec['grad_norm']:.3f} | "
-                  f"{rec['tok_per_s']:>7,} tok/s | data wait {rec['data_frac']:.0%} | ETA {eta_h:.1f} h", flush=True)
+            planned = t["total_steps"] * tokens_per_step
+            print(f"step {step:>6}/{t['total_steps']} | loss {rec['loss']:.4f} | lr {lr:.2e} | grad {rec['grad_norm']:.3f} | "
+                  f"{rec['tok_per_s']:>7,} tok/s | data wait {rec['data_frac']:.0%} | "
+                  f"tokens {tokens_seen / 1e9:.2f}B/{planned / 1e9:.2f}B ({tokens_seen / planned:.0%})", flush=True)
             log_f.write(json.dumps(rec) + "\n"); log_f.flush()  # peak_mem_gb and loss_scale are kept here
             t_last, data_time = time.time(), 0.0
 
